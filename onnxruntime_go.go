@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"unsafe"
+
+	"github.com/x448/float16"
 )
 
 // #cgo CFLAGS: -O2 -g
@@ -92,7 +94,7 @@ func InitializeEnvironment(opts ...EnvironmentOption) error {
 		return fmt.Errorf("Platform-specific initialization failed: %w", e)
 	}
 
-	name := C.CString("Golang onnxruntime environment")
+	name := C.CString("Gonnx")
 	defer C.free(unsafe.Pointer(name))
 	status := C.CreateOrtEnv(name, &ortEnv)
 	if status != nil {
@@ -1227,6 +1229,30 @@ func (m ExecutionMode) String() string {
 	return fmt.Sprintf("Invalid/unknown execution mode: %d", int(m))
 }
 
+// Wraps the GraphOptimizationLevel enum in C
+type GraphOptimizationLevel int
+
+const (
+	GraphOptimizationLevelDisabled = C.ORT_DISABLE_ALL
+	GraphOptimizationLevelBasic    = C.ORT_ENABLE_BASIC
+	GraphOptimizationLevelExtended = C.ORT_ENABLE_EXTENDED
+	GraphOptimizationLevelAll      = C.ORT_ENABLE_ALL
+)
+
+func (m GraphOptimizationLevel) String() string {
+	switch m {
+	case GraphOptimizationLevelDisabled:
+		return "ORT_DISABLE_ALL"
+	case GraphOptimizationLevelBasic:
+		return "ORT_ENABLE_BASIC"
+	case GraphOptimizationLevelExtended:
+		return "ORT_ENABLE_EXTENDED"
+	case GraphOptimizationLevelAll:
+		return "ORT_ENABLE_ALL"
+	}
+	return fmt.Sprintf("Invalid/unknown graph optimization level: %d", int(m))
+}
+
 // Used to set options when creating an ONNXRuntime session. There is currently
 // not a way to change options after the session is created, apart from
 // destroying the session and creating a new one. This struct opaquely wraps a
@@ -1259,10 +1285,8 @@ func (o *SessionOptions) SetExecutionMode(newMode ExecutionMode) error {
 	return nil
 }
 
-// Sets the optimization level to apply when loading a graph. Refer to
-// the C API documentation for SetSessionGraphOptimizationLevel.
-func (o *SessionOptions) SetGraphOptimizationLevel(
-	level GraphOptimizationLevel) error {
+// Sets the session's graph optimization level
+func (o *SessionOptions) SetGraphOptimizationLevel(level GraphOptimizationLevel) error {
 	status := C.SetSessionGraphOptimizationLevel(o.o, C.int(level))
 	if status != nil {
 		return statusToError(status)
@@ -1494,6 +1518,35 @@ func (o *SessionOptions) AppendExecutionProviderOpenVINO(
 	}
 
 	status := C.AppendExecutionProviderOpenVINOV2(o.o, keysPtr, valuesPtr,
+		C.int(len(options)))
+	if status != nil {
+		return statusToError(status)
+	}
+	return nil
+}
+
+// TODO: Descripiton. Enables the QNN and SNPE backends for the given session options on supported
+// platforms. See
+// https://onnxruntime.ai/docs/execution-providers/OpenVINO-ExecutionProvider.html#summary-of-options
+// for a list of supported keys and values that can be passed in the options
+// map.
+func (o *SessionOptions) AppendExecutionProvider(provider_name string,
+	options map[string]string) error {
+	// There's probably a more concise way to do this, but we don't want to
+	// do "&(keys[0])" if keys is an empty slice, so we'll declare the null
+	// ptrs ahead of time and only set them if we know the slices aren't empty.
+	var keysPtr, valuesPtr **C.char
+	if len(options) != 0 {
+		keys, values := mapToCStrings(options)
+		defer freeCStrings(keys)
+		defer freeCStrings(values)
+		keysPtr = &(keys[0])
+		valuesPtr = &(values[0])
+	}
+	cProviderName := C.CString(provider_name)
+	defer C.free(unsafe.Pointer(cProviderName))
+
+	status := C.AppendExecutionProvider(o.o, cProviderName, keysPtr, valuesPtr,
 		C.int(len(options)))
 	if status != nil {
 		return statusToError(status)
@@ -2291,6 +2344,8 @@ func createTensorFromOrtValue(v *C.OrtValue) (Value, error) {
 		return createTensorWithCData[uint64](shape, tensorData)
 	case TensorElementDataTypeBool:
 		return createTensorWithCData[bool](shape, tensorData)
+	case TensorElementDataTypeFloat16:
+		return createTensorWithCData[float16.Float16](shape, tensorData)
 	default:
 		totalSize := shape.FlattenedSize()
 		actualData := unsafe.Slice((*byte)(tensorData), totalSize)
