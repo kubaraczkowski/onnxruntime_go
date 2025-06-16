@@ -2593,6 +2593,14 @@ func getSessionOutputInfo(s *C.OrtSession, i int, dst *InputOutputInfo) error {
 	return nil
 }
 
+func (session *AdvancedSession) GetInputOutputInfo() ([]InputOutputInfo, []InputOutputInfo, error) {
+	return getInputOutputInfoFromCSession(session.ortSession)
+}
+
+func (session *DynamicAdvancedSession) GetInputOutputInfo() ([]InputOutputInfo, []InputOutputInfo, error) {
+	return getInputOutputInfoFromCSession(session.s.ortSession)
+}
+
 // Takes an initialized OrtSession and returns slices of info for each input
 // and output, respectively. Used internally by GetInputOutputInfo, etc.
 func getInputOutputInfoFromCSession(s *C.OrtSession) ([]InputOutputInfo,
